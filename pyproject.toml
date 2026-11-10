@@ -1,0 +1,18 @@
+[project]
+name = "eaix"
+version = "0.1.0"
+description = "Energy AI Index: AI potential per role from utility job postings"
+requires-python = ">=3.11"
+dependencies = [
+  "httpx>=0.27",
+  "selectolax>=0.3",
+  "deltalake>=0.18",
+  "polars>=1.0",
+]
+
+[project.optional-dependencies]
+browser = ["playwright>=1.45"]
+dev = ["pytest>=8"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
