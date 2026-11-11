@@ -4,6 +4,12 @@ on:
   schedule:
     - cron: "17 4 * * *"   # daily 04:17 UTC
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "data/seed/**"
+      - "src/eaix/ingest/**"
+      - ".github/workflows/scrape.yml"
 
 permissions:
   contents: write
