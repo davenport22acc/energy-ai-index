@@ -16,13 +16,13 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install -e ".[browser]" && python -m playwright install --with-deps chromium
-      - name: Detect ATS per company
+      - run: pip install -e .
+      - name: Detect careers page and ATS per company
         run: python -m eaix.ingest.ats_detect data/seed/companies.csv
-      - name: Commit updated universe
+      - name: Commit results
         run: |
           git config user.name "eaix-bot"
           git config user.email "eaix-bot@users.noreply.github.com"
-          git add data/seed/companies.csv
-          git diff --cached --quiet || git commit -m "Update ATS detection"
+          git add data/seed/companies.csv data/reports/
+          git diff --cached --quiet || git commit -m "ATS detection run $(date -u +%F)"
           git push

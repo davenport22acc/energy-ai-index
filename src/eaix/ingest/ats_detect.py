@@ -1,7 +1,7 @@
-"""Detect which applicant tracking system (ATS) a careers page runs on.
+"""Find each company's careers page and detect which applicant tracking system (ATS) it runs on.
 
 Usage: python -m eaix.ingest.ats_detect data/seed/companies.csv
-Writes the detected ATS back into the `ats` column.
+Fills `careers_url` (if empty) and `ats`, writes a run report to data/reports/ats_detect.md.
 """
 from __future__ import annotations
 
@@ -10,8 +10,9 @@ import re
 import sys
 import time
 import urllib.robotparser
+from datetime import date
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import httpx
 
@@ -19,18 +20,27 @@ USER_AGENT = "accilium-energy-ai-index/0.1 (research; contact: energy-ai-index@a
 
 # Fingerprints: pattern in final URL or HTML -> ATS key. Order matters.
 FINGERPRINTS: list[tuple[str, str]] = [
-    (r"myworkdayjobs\.com|workday", "workday"),
-    (r"successfactors|sapsf|jobs\.sap\.com", "successfactors"),
+    (r"myworkdayjobs\.com|\.wd\d\.myworkday", "workday"),
+    (r"successfactors|sapsf\.|jobs\.sap\.com|career\d*\.successfactors", "successfactors"),
     (r"softgarden", "softgarden"),
     (r"personio", "personio"),
     (r"dvinci|d\.vinci", "dvinci"),
-    (r"rexx-systems|rexx", "rexx"),
+    (r"rexx-systems|/rexx|rexx-recruitment", "rexx"),
     (r"prescreen", "prescreen"),
-    (r"umantis|abacus", "umantis"),
+    (r"umantis|refline", "umantis"),
     (r"smartrecruiters", "smartrecruiters"),
-    (r"onlyfy|jobbase", "onlyfy"),
+    (r"onlyfy|jobbase\.io", "onlyfy"),
     (r"greenhouse\.io", "greenhouse"),
+    (r"concludis", "concludis"),
+    (r"milchundzucker|beesite", "beesite"),
+    (r"jobs\.b-ite\.com|b-ite", "bite"),
+    (r"talention|talentlink|lumesse", "talentlink"),
+    (r"recruitee", "recruitee"),
 ]
+
+CAREER_LINK = re.compile(r'href=["\']([^"\']+)["\'][^>]*>([^<]{0,80})<', re.I)
+CAREER_WORDS = re.compile(r"karriere|jobs|stellen|career|bewerb", re.I)
+COMMON_PATHS = ["/karriere", "/jobs", "/karriere/jobs", "/de/karriere", "/career", "/unternehmen/karriere"]
 
 
 def allowed(url: str) -> bool:
@@ -51,37 +61,70 @@ def tdm_reserved(resp: httpx.Response) -> bool:
     return bool(re.search(r'name=["\']tdm-reservation["\']\s+content=["\']1', resp.text, re.I))
 
 
-def detect(url: str, client: httpx.Client) -> str:
-    if not url:
-        return ""
+def find_careers_url(website: str, client: httpx.Client) -> str:
+    """Look for a careers link on the homepage, then try common paths."""
+    try:
+        home = client.get(website, follow_redirects=True, timeout=20)
+        for href, label in CAREER_LINK.findall(home.text):
+            if CAREER_WORDS.search(href) or CAREER_WORDS.search(label):
+                return urljoin(str(home.url), href)
+    except Exception:
+        pass
+    for path in COMMON_PATHS:
+        url = urljoin(website, path)
+        try:
+            r = client.get(url, follow_redirects=True, timeout=15)
+            if r.status_code == 200:
+                return str(r.url)
+        except Exception:
+            continue
+    return ""
+
+
+def detect(url: str, client: httpx.Client) -> tuple[str, str]:
+    """Return (ats, final_url). Follows one level of links to find the job list."""
     if not allowed(url):
-        return "blocked_robots"
+        return "blocked_robots", url
     resp = client.get(url, follow_redirects=True, timeout=20)
     if tdm_reserved(resp):
-        return "tdm_reserved"
-    haystack = f"{resp.url} {resp.text[:200_000]}"
+        return "tdm_reserved", str(resp.url)
+    haystack = f"{resp.url} {resp.text[:300_000]}"
     for pattern, key in FINGERPRINTS:
         if re.search(pattern, haystack, re.I):
-            return key
-    return "custom"
+            return key, str(resp.url)
+    return "custom", str(resp.url)
 
 
 def main(path: str) -> None:
     rows = list(csv.DictReader(Path(path).open(encoding="utf-8")))
+    report = [f"# ATS detection {date.today().isoformat()}", "", "| Company | Careers URL | ATS |", "| --- | --- | --- |"]
     with httpx.Client(headers={"User-Agent": USER_AGENT}) as client:
         for row in rows:
             try:
-                row["ats"] = detect(row.get("careers_url", ""), client)
-            except Exception as exc:  # keep going, log in notes
+                if not row.get("careers_url"):
+                    row["careers_url"] = find_careers_url(row["website"], client)
+                if row["careers_url"]:
+                    row["ats"], row["careers_url"] = detect(row["careers_url"], client)
+                else:
+                    row["ats"] = "not_found"
+            except Exception as exc:
                 row["ats"] = "error"
-                row["notes"] = f"{row.get('notes', '')} {type(exc).__name__}".strip()
-            print(f"{row['name']}: {row['ats']}")
+                row["notes"] = type(exc).__name__
+            line = f"| {row['name']} | {row['careers_url']} | {row['ats']} |"
+            print(line)
+            report.append(line)
             time.sleep(1.0)
-    if rows:
-        with Path(path).open("w", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
-            writer.writeheader()
-            writer.writerows(rows)
+    with Path(path).open("w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
+        writer.writeheader()
+        writer.writerows(rows)
+    counts: dict[str, int] = {}
+    for row in rows:
+        counts[row["ats"]] = counts.get(row["ats"], 0) + 1
+    report += ["", "## Summary", ""] + [f"- {k}: {v}" for k, v in sorted(counts.items(), key=lambda x: -x[1])]
+    out = Path("data/reports/ats_detect.md")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text("\n".join(report) + "\n", encoding="utf-8")
 
 
 if __name__ == "__main__":
