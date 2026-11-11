@@ -39,19 +39,32 @@ FINGERPRINTS: list[tuple[str, str]] = [
 ]
 
 CAREER_LINK = re.compile(r'href=["\']([^"\']+)["\'][^>]*>([^<]{0,80})<', re.I)
-CAREER_WORDS = re.compile(r"karriere|jobs|stellen|career|bewerb", re.I)
+CAREER_WORDS = re.compile(
+    r"karriere|\bjobs?\b|jobs\.|stellenangebot|offene[-\s]stellen|stellenmarkt|jobportal|career|bewerb", re.I
+)
+NOT_CAREER = re.compile(r"baustelle|haltestelle|sammelstelle|schlichtung|ladestelle|servicestelle", re.I)
 COMMON_PATHS = ["/karriere", "/jobs", "/karriere/jobs", "/de/karriere", "/career", "/unternehmen/karriere"]
 
 
-def allowed(url: str) -> bool:
+def allowed(url: str, client: httpx.Client) -> tuple[bool, str]:
+    """robots.txt check per RFC 9309: 4xx = no rules (allowed), 5xx/unreachable = disallowed.
+
+    Python's stock RobotFileParser treats 401/403 as disallow-all, which is pre-RFC
+    and produced false blocks on sites that simply refuse unknown agents for robots.txt.
+    """
     parts = urlparse(url)
-    rp = urllib.robotparser.RobotFileParser()
-    rp.set_url(f"{parts.scheme}://{parts.netloc}/robots.txt")
+    robots = f"{parts.scheme}://{parts.netloc}/robots.txt"
     try:
-        rp.read()
+        r = client.get(robots, follow_redirects=True, timeout=15)
     except Exception:
-        return True
-    return rp.can_fetch(USER_AGENT, url)
+        return False, "robots_unreachable"
+    if 400 <= r.status_code < 500:
+        return True, f"robots_{r.status_code}"
+    if r.status_code >= 500:
+        return False, f"robots_{r.status_code}"
+    rp = urllib.robotparser.RobotFileParser()
+    rp.parse(r.text.splitlines())
+    return rp.can_fetch(USER_AGENT, url), "robots_ok"
 
 
 def tdm_reserved(resp: httpx.Response) -> bool:
@@ -66,6 +79,8 @@ def find_careers_url(website: str, client: httpx.Client) -> str:
     try:
         home = client.get(website, follow_redirects=True, timeout=20)
         for href, label in CAREER_LINK.findall(home.text):
+            if NOT_CAREER.search(href) or NOT_CAREER.search(label):
+                continue
             if CAREER_WORDS.search(href) or CAREER_WORDS.search(label):
                 return urljoin(str(home.url), href)
     except Exception:
@@ -83,7 +98,8 @@ def find_careers_url(website: str, client: httpx.Client) -> str:
 
 def detect(url: str, client: httpx.Client) -> tuple[str, str]:
     """Return (ats, final_url). Follows one level of links to find the job list."""
-    if not allowed(url):
+    ok, _ = allowed(url, client)
+    if not ok:
         return "blocked_robots", url
     resp = client.get(url, follow_redirects=True, timeout=20)
     if tdm_reserved(resp):
