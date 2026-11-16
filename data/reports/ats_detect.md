@@ -1,4 +1,4 @@
-# ATS detection 2026-11-15
+# ATS detection 2026-11-16
 
 | Company | Careers URL | ATS |
 | --- | --- | --- |
