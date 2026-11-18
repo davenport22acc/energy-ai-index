@@ -54,11 +54,63 @@ def pick(df: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, str]]:
     return df[list(found.values())].rename(columns={v: k for k, v in found.items()}), found
 
 
+def prefetch(db: Mastr, attempts: int = 8) -> str:
+    """Download the full export ourselves, with retries and resume.
+
+    The MaStR server sometimes drops HEAD and range requests, which made open-mastr's
+    own download fail. With the zip already in place, open-mastr skips its download.
+    Returns the export date (YYYYMMDD) to pass on to db.download.
+    """
+    import os
+    import time as _time
+    from datetime import datetime, timedelta, timezone
+
+    import requests
+    from open_mastr.xml_download.utils_download_bulk import gen_xml_download_url
+
+    ua = {"User-Agent": "accilium-energy-pipeline-radar/0.2 (research)"}
+    folder = Path(db.output_dir) / "data" / "xml_download"
+    folder.mkdir(parents=True, exist_ok=True)
+    now = datetime.now(timezone.utc)
+    for day in (now, now - timedelta(days=1)):
+        stamp = day.strftime("%Y%m%d")
+        for version in ("current", "before", "after"):
+            url = gen_xml_download_url(day.timetuple(), use_version=version)
+            try:
+                probe = requests.get(url, stream=True, headers=ua, timeout=60)
+                probe.close()
+            except requests.RequestException:
+                continue
+            if probe.status_code != 200:
+                continue
+            target = folder / f"Gesamtdatenexport_{stamp}.zip"
+            part = target.with_suffix(".part")
+            for i in range(attempts):
+                done = part.stat().st_size if part.exists() else 0
+                headers = dict(ua, Range=f"bytes={done}-") if done else ua
+                try:
+                    with requests.get(url, stream=True, headers=headers, timeout=120) as r:
+                        if r.status_code not in (200, 206):
+                            raise requests.RequestException(f"HTTP {r.status_code}")
+                        mode = "ab" if r.status_code == 206 else "wb"
+                        with part.open(mode) as f:
+                            for chunk in r.iter_content(chunk_size=8 << 20):
+                                f.write(chunk)
+                    os.replace(part, target)
+                    print(f"Downloaded {url} ({target.stat().st_size / 1e9:.1f} GB)")
+                    return stamp
+                except requests.RequestException as exc:
+                    print(f"Attempt {i + 1} failed: {exc}")
+                    _time.sleep(30 * (i + 1))
+    raise RuntimeError("MaStR export could not be downloaded")
+
+
 def main(out: str = "out") -> None:
     out_dir = Path(out)
     out_dir.mkdir(parents=True, exist_ok=True)
     db = Mastr()
-    db.download(method="bulk", data=["wind", "solar", "storage", "permit", "market"])
+    stamp = prefetch(db)
+    db.download(method="bulk", data=["wind", "solar", "storage", "permit", "market"], date=stamp)
     tables = set(inspect(db.engine).get_table_names())
 
     frames, found_cols = [], {}
