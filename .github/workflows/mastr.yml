@@ -1,0 +1,40 @@
+name: ingest-mastr
+
+on:
+  schedule:
+    - cron: "41 3 * * 1"   # weekly, Monday 04:41 Vienna (winter)
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "src/epr/ingest/mastr.py"
+      - ".github/workflows/mastr.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  mastr:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e .
+      - name: Download MaStR and build DE pipeline base
+        run: python -m epr.ingest.mastr out
+      - name: Upload Parquet files
+        uses: actions/upload-artifact@v4
+        with:
+          name: mastr-${{ github.run_id }}
+          path: out/*.parquet
+          retention-days: 30
+      - name: Commit summary
+        run: |
+          git config user.name "epr-bot"
+          git config user.email "epr-bot@users.noreply.github.com"
+          git add data/reports/mastr_summary.md
+          git diff --cached --quiet || git commit -m "MaStR summary $(date -u +%F)"
+          git push

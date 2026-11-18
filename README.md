@@ -1,42 +1,42 @@
-# Energy AI Index (accilium)
+# Energy Pipeline Radar (accilium)
 
-Public, interactive analysis of AI potential per role in Austrian and German energy companies, based on a meta-analysis of their job postings.
+Public website showing which wind, PV and storage projects are being developed in Austria, Germany and Italy, who develops them, when they are likely to connect, and where battery storage pays off. Built on Microsoft Fabric as a learning project (data engineering, data science, agentic coding).
 
-Learning build on Microsoft Fabric: data engineering, data science, agentic coding.
+Plan: Claude Doc "Energy Pipeline Radar: Plan".
 
-## How it works
+## Modules
 
-1. **Universe**: list of utilities (AT complete, DE largest) in `data/seed/companies.csv`
-2. **Ingest**: detect each company's applicant tracking system (ATS), scrape postings via one adapter per ATS, generic LLM fallback for custom sites
-3. **Bronze**: raw postings, personal data (names, emails, phones) stripped on ingest
-4. **Silver**: deduplicated postings, role mapped to ESCO / ISCO-08, tasks extracted by LLM
-5. **Gold**: AI exposure per task (ILO 2025 index, Anthropic Economic Index) aggregated per role and company
-6. **Export**: aggregates only, as JSON, to the static website in `web/`
+- **A Pipeline Radar**: registers, auctions, permits, grid capacity. AI extracts projects from permit documents and resolves project companies to developers.
+- **B BESS Siting**: price spreads per bidding zone (ENTSO-E, GME) combined with free grid capacity.
+
+## Sources (phase 0)
+
+| Source | Country | Status |
+| --- | --- | --- |
+| Marktstammdatenregister (open-mastr, DL-DE-BY-2.0) | DE | `src/epr/ingest/mastr.py`, weekly |
+| BNetzA auction results | DE | next |
+| Terna MACSE results | IT | next |
+| Free grid capacity per substation (quarterly PDFs) | AT | next |
+| ENTSO-E Transparency prices | AT, DE, IT | needs API token |
+
+## Run
+
+Automatic: GitHub Actions runs `ingest-mastr` weekly and on every push to `src/epr/ingest/mastr.py`. Parquet files are attached to the run as an artifact, the summary lands in `data/reports/mastr_summary.md`.
+
+Locally:
+
+```
+pip install -e .
+python -m epr.ingest.mastr out
+```
+
+The first local run downloads the full MaStR export (several GB) and takes a while.
 
 ## Rules
 
-- No persons. Only roles and companies.
-- No full posting texts on the website, only aggregates and our own scores.
-- Respect robots.txt and machine-readable TDM reservations (§ 44b UrhG DE, § 42h UrhG AT). Log per domain.
-- Raw texts are kept only as long as needed for the analysis.
+- Only open, official or regulatory data. No job boards or commercial portals.
+- No persons. Companies and project companies only.
 
-## Layout
+## Legacy
 
-```
-src/eaix/ingest/      ATS detection and adapters
-src/eaix/analysis/    role mapping, task extraction, scoring
-data/seed/            company universe
-fabric/notebooks/     Fabric notebooks (synced via Fabric Git integration)
-web/                  public website
-docs/                 method and decisions
-```
-
-## Phases
-
-- Phase 0 (no Fabric needed): universe AT, ATS fingerprinting, first 3 adapters, local Delta files
-- Phase 1: Fabric workspace, Lakehouse, pipelines, Git sync
-- Phase 2: role mapping, task scoring, validation (150 hand-labelled tasks, kappa >= 0.7)
-- Phase 3: website MVP, approval by management and legal, go-live
-- Phase 4: DE breadth, maturity signals (TED tenders), time series
-
-Plan and research: see the Claude Doc "Energy AI Index: Plan und Research".
+`legacy/` holds the earlier job-postings prototype (Energy AI Index). Its workflow is disabled.
