@@ -2,13 +2,12 @@ name: ingest-mastr
 
 on:
   schedule:
-    - cron: "41 3 * * 1"   # weekly, Monday 04:41 Vienna (winter)
+    - cron: "41 3 1 * *"   # monthly, 1st of month 04:41 Vienna (winter)
   workflow_dispatch:
   push:
     branches: [main]
     paths:
       - "src/epr/ingest/mastr.py"
-      - ".github/workflows/mastr.yml"
 
 permissions:
   contents: write
