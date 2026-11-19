@@ -21,7 +21,7 @@ Plan: Claude Doc "Energy Pipeline Radar: Plan".
 
 ## Run
 
-Automatic: GitHub Actions runs `ingest-mastr` weekly and on every push to `src/epr/ingest/mastr.py`. Parquet files are attached to the run as an artifact, the summary lands in `data/reports/mastr_summary.md`.
+Automatic: GitHub Actions runs `ingest-mastr` monthly and on every push to `src/epr/ingest/mastr.py`. Parquet files are attached to the run as an artifact, the summary lands in `data/reports/mastr_summary.md`.
 
 Locally:
 
