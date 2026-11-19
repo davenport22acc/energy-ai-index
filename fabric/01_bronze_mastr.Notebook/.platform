@@ -1,0 +1,12 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json",
+  "metadata": {
+    "type": "Notebook",
+    "displayName": "01_bronze_mastr",
+    "description": "MaStR export to bronze Delta tables, 1:1, all columns as string, one partition per load_date"
+  },
+  "config": {
+    "version": "2.0",
+    "logicalId": "56a1c523-fc2b-47aa-9183-0a1037ff8f56"
+  }
+}
