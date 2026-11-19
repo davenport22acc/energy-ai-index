@@ -22,7 +22,23 @@ from open_mastr import Mastr
 from sqlalchemy import inspect
 
 MIN_KW = 1000
-TECH_TABLES = {"wind": "wind_extended", "solar": "solar_extended", "storage": "storage_extended"}
+TECH_TABLES = {
+    "wind": ["wind_extended", "units_wind", "EinheitenWind", "einheitenwind"],
+    "solar": ["solar_extended", "units_solar", "EinheitenSolar", "einheitensolar"],
+    "storage": ["storage_extended", "units_electricity_storage", "EinheitenStromSpeicher", "einheitenstromspeicher"],
+}
+PERMIT_TABLES = ["permit", "permits", "EinheitenGenehmigung", "einheitengenehmigung"]
+ACTOR_TABLES = ["market_actors", "Marktakteure", "marktakteure"]
+
+
+def first(names: list[str], available: set[str]) -> str | None:
+    lower = {a.lower(): a for a in available}
+    for n in names:
+        if n in available:
+            return n
+        if n.lower() in lower:
+            return lower[n.lower()]
+    return None
 
 CANDIDATES = {
     "unit_id": ["EinheitMastrNummer"],
@@ -105,34 +121,55 @@ def prefetch(db: Mastr, attempts: int = 8) -> str:
     raise RuntimeError("MaStR export could not be downloaded")
 
 
+def read_units(table: str, engine) -> pd.DataFrame:
+    """Read only units >= MIN_KW in SQL to keep memory low (PV has millions of rows).
+
+    Works for tables and views. Falls back to a full read if the capacity column has another name.
+    """
+    for col in ("Nettonennleistung", "Bruttoleistung", "net_capacity", "gross_capacity"):
+        try:
+            return pd.read_sql_query(f'SELECT * FROM "{table}" WHERE "{col}" >= {MIN_KW}', engine)
+        except Exception:
+            continue
+    return pd.read_sql_query(f'SELECT * FROM "{table}"', engine)
+
+
 def main(out: str = "out") -> None:
     out_dir = Path(out)
     out_dir.mkdir(parents=True, exist_ok=True)
     db = Mastr()
     stamp = prefetch(db)
     db.download(method="bulk", data=["wind", "solar", "storage", "permit", "market"], date=stamp)
-    tables = set(inspect(db.engine).get_table_names())
+    insp = inspect(db.engine)
+    tables = set(insp.get_table_names()) | set(insp.get_view_names())
+    print("Tables and views:", sorted(tables))
 
     frames, found_cols = [], {}
-    for tech, table in TECH_TABLES.items():
-        if table not in tables:
+    for tech, options in TECH_TABLES.items():
+        table = first(options, tables)
+        if table is None:
+            print(f"No table for {tech}")
             continue
-        raw = pd.read_sql_table(table, db.engine)
+        raw = read_units(table, db.engine)
         df, found = pick(raw)
         found_cols[tech] = found
         df["technology"] = tech
         df["kw"] = pd.to_numeric(df.get("kw"), errors="coerce")
         frames.append(df[df["kw"] >= MIN_KW])
+    if not frames:
+        raise RuntimeError(f"No unit tables found. Available: {sorted(tables)}")
     units = pd.concat(frames, ignore_index=True)
 
     operating = units["status"].astype(str).str.contains("In Betrieb", na=False)
     units[~operating].to_parquet(out_dir / "units_pipeline.parquet", index=False)
     units[operating].to_parquet(out_dir / "units_operating.parquet", index=False)
 
-    if "permit" in tables:
-        pd.read_sql_table("permit", db.engine).to_parquet(out_dir / "permits.parquet", index=False)
-    if "market_actors" in tables and "operator_id" in units:
-        actors = pd.read_sql_table("market_actors", db.engine)
+    permit_table = first(PERMIT_TABLES, tables)
+    if permit_table:
+        pd.read_sql_query(f'SELECT * FROM "{permit_table}"', db.engine).to_parquet(out_dir / "permits.parquet", index=False)
+    actor_table = first(ACTOR_TABLES, tables)
+    if actor_table and "operator_id" in units:
+        actors = pd.read_sql_query(f'SELECT * FROM "{actor_table}"', db.engine)
         key = "MastrNummer" if "MastrNummer" in actors.columns else actors.columns[0]
         actors[actors[key].isin(units["operator_id"].dropna().unique())].to_parquet(
             out_dir / "operators.parquet", index=False
