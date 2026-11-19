@@ -1,0 +1,12 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json",
+  "metadata": {
+    "type": "Notebook",
+    "displayName": "03_gold_pipeline",
+    "description": "Silver to gold: pipeline by state, project list for the website, monthly status transitions"
+  },
+  "config": {
+    "version": "2.0",
+    "logicalId": "739a1abd-d305-45da-ba74-650c0955afb9"
+  }
+}
